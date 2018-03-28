@@ -558,7 +558,7 @@ function makeStreamTransport(protocol, connect, createServer, callback) {
           if(--refs === 0) stream.emit('no_reference');
         },
         send: function(m) {
-          stream.write(stringify(m)/*, 'ascii'*/);
+          stream.write(stringify(m), 'utf8');
         },
         protocol: protocol
       }
@@ -729,7 +729,7 @@ function makeUdpTransport(options, callback) {
     return {
       send: function(m) {
         var s = stringify(m);
-        socket.send(new Buffer(s, 'ascii'), 0, s.length, remote.port, remote.address);          
+        socket.send(new Buffer(s, 'utf8'), 0, s.length, remote.port, remote.address);          
       },
       protocol: 'UDP',
       release : function() {}
@@ -1304,7 +1304,7 @@ exports.create = function(options, callback) {
   }
 
   function decodeFlowToken(token) {
-    var s = (new Buffer(token, 'base64')).toString('ascii').split(',');
+    var s = (new Buffer(token, 'base64')).toString('utf8').split(',');
     if(s.length != 6) return;
 
     var flow = {protocol: s[1], address: s[2], port: +s[3], local: {address: s[4], port: +s[5]}};
