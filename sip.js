@@ -1320,21 +1320,26 @@ exports.create = function(options, callback) {
       }
       else {
         var hop = parseUri(m.uri);
-
+  
         if(typeof m.headers.route === 'string')
           rq.headers.route = parsers.route({s: m.headers.route, i:0});
  
-        if(m.headers.route && m.headers.route.length > 0) {
-          hop = parseUri(m.headers.route[0].uri);
-          if(hop.host === hostname) {
-            m.headers.route.shift();
-          } 
-          else if(hop.params.lr === undefined ) {
-            m.headers.route.shift();
-            m.headers.route.push({uri: rq.uri});
-            m.uri = hop;
+          if (m.method == 'INFO') {
+            m.headers.route = hop;
+          } else {
+            if (m.headers.route && m.headers.route.length > 0) {
+              console.log(m);
+              hop = parseUri(m.headers.route[0].uri);
+              if (hop.host === hostname) {
+                m.headers.route.shift();
+              }
+              else if (hop.params.lr === undefined) {
+                m.headers.route.shift();
+                m.headers.route.push({ uri: rq.uri });
+                m.uri = hop;
+              }
+            }
           }
-        }
 
         (function(callback) {
           if(hop.host === hostname) {
