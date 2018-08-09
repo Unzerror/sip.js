@@ -1328,7 +1328,7 @@ exports.create = function(options, callback) {
             m.headers.route = hop;
           } else {
             if (m.headers.route && m.headers.route.length > 0) {
-              console.log(m);
+              
               hop = parseUri(m.headers.route[0].uri);
               if (hop.host === hostname) {
                 m.headers.route.shift();
