@@ -1,23 +1,23 @@
 var crypto = require('crypto');
 var util = require('util');
-var stringifyUri = require('./sip').stringifyUri; 
+var stringifyUri = require('./sip').stringifyUri;
 
 function unq(a) {
-  if(a && a[0] === '"' && a[a.length-1] === '"')
-    return a.substr(1, a.length - 2);
-  return a;
+    if (a && a[0] === '"' && a[a.length - 1] === '"')
+        return a.substr(1, a.length - 2);
+    return a;
 }
 
 function q(a) {
-  if(typeof a === 'string' && a[0] !== '"')
-    return ['"', a, '"'].join('');
-  return a;
+  if (typeof a === 'string' && a[0] !== '"')
+        return ['"', a, '"'].join('');
+    return a;
 }
 
 function lowercase(a) {
-  if(typeof a === 'string')
-    return a.toLowerCase();
-  return a;
+    if (typeof a === 'string')
+        return a.toLowerCase();
+    return a;
 }
 
 function kd() {
@@ -41,7 +41,8 @@ exports.calculateUserRealmPasswordHash = calculateUserRealmPasswordHash;
 
 function calculateHA1(ctx) {
   var userhash = ctx.userhash || calculateUserRealmPasswordHash(ctx.user, ctx.realm, ctx.password);
-  if(ctx.algorithm === 'md5-sess') return kd(userhash, ctx.nonce, ctx.cnonce);
+  if (ctx.algorithm === 'md5-sess')
+     return kd(userhash, ctx.nonce, ctx.cnonce);
 
   return userhash; 
 }
@@ -83,6 +84,11 @@ function numberTo8Hex(n) {
 }
 
 function findDigestRealm(headers, realm) {
+    if (!realm)
+        return headers && headers[0];
+    return headers && headers.filter(function(x) {
+        return x.scheme === 'Digest' && unq(x.realm) === realm;
+    })[0];
   if(!realm) return headers && headers[0];
   return headers && headers.filter(function(x) { return x.scheme.toLowerCase() === 'digest' && unq(x.realm) === realm; })[0];
 }
@@ -95,6 +101,8 @@ function selectQop(challenge, preference) {
   if(!preference)
     return challenge[0];
 
+    if (typeof(preference) === 'string')
+        preference = preference.split(',');
   if(typeof(preference) === 'string') 
     preference = preference.split(',');
 
@@ -133,7 +141,8 @@ exports.challenge = function(ctx, rs) {
 exports.authenticateRequest = function(ctx, rq, creds) {
   var response = findDigestRealm(rq.headers[ctx.proxy ? 'proxy-authorization': 'authorization'], ctx.realm);
 
-  if(!response) return false;
+    if (!response)
+        return false;
 
   var cnonce = unq(response.cnonce);
   var uri = unq(response.uri);
@@ -200,8 +209,8 @@ function initClientContext(ctx, rs, creds) {
     if(ctx.algorithm === 'md5-sess')
       ctx.ha1 = kd(ctx.ha1, ctx.nonce, ctx.cnonce);
 
-    ctx.domain = unq(challenge.domain);
- }
+        ctx.domain = unq(challenge.domain);
+    }
 
   ctx.opaque = unq(challenge.opaque);
 }
@@ -231,7 +240,9 @@ exports.signRequest = function (ctx, rq, rs, creds) {
 
   var hname = ctx.proxy ? 'proxy-authorization' : 'authorization'; 
  
-  rq.headers[hname] = (rq.headers[hname] || []).filter(function(x) { return unq(x.realm) !== ctx.realm; });
+    rq.headers[hname] = (rq.headers[hname] || []).filter(function(x) {
+        return unq(x.realm) !== ctx.realm;
+    });
   rq.headers[hname].push(signature);
 
   return ctx.qop ? ctx : null;
@@ -240,7 +251,8 @@ exports.signRequest = function (ctx, rq, rs, creds) {
 exports.authenticateResponse = function(ctx, rs) {
   var signature = rs.headers[ctx.proxy ? 'proxy-authentication-info' : 'authentication-info'];
 
-  if(!signature) return undefined;
+    if (!signature)
+        return undefined;
 
   var digest=calculateDigest({ha1:ctx.ha1, method:'', nonce:ctx.nonce, nc:numberTo8Hex(ctx.nc), cnonce:ctx.cnonce, qop:ctx.qop, uri:ctx.uri, enity:rs.content});
   if(digest === unq(signature.rspauth)) {
