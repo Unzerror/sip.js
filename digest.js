@@ -89,8 +89,6 @@ function findDigestRealm(headers, realm) {
     return headers && headers.filter(function(x) {
         return x.scheme === 'Digest' && unq(x.realm) === realm;
     })[0];
-  if(!realm) return headers && headers[0];
-  return headers && headers.filter(function(x) { return x.scheme.toLowerCase() === 'digest' && unq(x.realm) === realm; })[0];
 }
 
 function selectQop(challenge, preference) {
@@ -103,8 +101,6 @@ function selectQop(challenge, preference) {
 
     if (typeof(preference) === 'string')
         preference = preference.split(',');
-  if(typeof(preference) === 'string') 
-    preference = preference.split(',');
 
   for(var i = 0; i !== preference.length; ++i)
     for(var j = 0; j !== challenge.length; ++j)
