@@ -5,6 +5,7 @@ var assert = require('assert');
 var dgram = require('dgram');
 var tls = require('tls');
 var os = require('os');
+var https = require('https');
 var crypto = require('crypto');
 var WebSocket = require('ws');
 
@@ -210,10 +211,12 @@ function parseUri(s) {
   if(typeof s === 'object')
     return s;
 
+  s = s.replace('::ffff:', '');
+
   var re = /^(sips?):(?:([^\s>:@]+)(?::([^\s@>]+))?@)?([\w\-\.]+)(?::(\d+))?((?:;[^\s=\?>;]+(?:=[^\s?\;]+)?)*)(?:\?(([^\s&=>]+=[^\s&=>]+)(&[^\s&=>]+=[^\s&=>]+)*))?$/;
 
   var r = re.exec(s);
-
+  
   if(r) {
     return {
       schema: r[1],
@@ -508,7 +511,9 @@ function checkMessage(msg) {
     msg.headers.cseq;
 }
 
-function makeStreamTransport(protocol, connect, createServer, callback) {
+function makeStreamTransport(options, connect, createServer, callback) {
+  var protocol = options.protocol;
+  var isServer = options.isServer;
   var remotes = Object.create(null);
   var flows = Object.create(null);
 
@@ -518,7 +523,7 @@ function makeStreamTransport(protocol, connect, createServer, callback) {
       refs = 0;
 
     function register_flow() {
-      flowid = [remoteid,stream.localAddress, stream.localPort].join();
+      flowid = [remoteid,stream.localAddress ? stream.localAddress : stream._socket.remoteAddress, stream.localPort ? stream.localPort : stream._socket.address().port].join();
       flows[flowid] = remotes[remoteid];
     }
 
@@ -531,12 +536,22 @@ function makeStreamTransport(protocol, connect, createServer, callback) {
           stream);
       }
     }));
+    stream.on('message', makeStreamParser(function(m) {
+      if(checkMessage(m)) {
+        if(m.method) m.headers.via[0].params.received = remote.address;
+        callback(m,
+          {protocol: remote.protocol, address: stream._socket.remoteAddress, port: stream._socket.remotePort, local: { address: stream._socket.address().address, port: stream._socket.address().port}},
+          stream);
+      }
+    }));
   
     stream.on('close',    function() {
       if(flowid) delete flows[flowid]; 
       delete remotes[remoteid];
     });
+    stream.on('open',  register_flow);
     stream.on('connect',  register_flow);
+    stream.on('connection',  register_flow);
 
     stream.on('error',    function() {});
     stream.on('end',      function() { 
@@ -545,8 +560,10 @@ function makeStreamTransport(protocol, connect, createServer, callback) {
     });
 
     stream.on('timeout',  function() { if(refs === 0) stream.end(); });
-    stream.setTimeout(120000);   
-    stream.setMaxListeners(10000);
+    if (stream.setTimeout) {
+      stream.setTimeout(120000);
+      stream.setMaxListeners(10000);
+    }
  
     remotes[remoteid] = function(onError) {
       ++refs;
@@ -558,46 +575,56 @@ function makeStreamTransport(protocol, connect, createServer, callback) {
           if(--refs === 0) stream.emit('no_reference');
         },
         send: function(m) {
-          stream.write(stringify(m), 'utf8');
+          if (stream.write) {
+            stream.write(stringify(m), 'utf8');
+          } else {
+            if (stream.readyState == 1 ) {
+              stream.send(stringify(m), 'utf8');
+            } else {
+              onError('Error sending message via Websocket');
+            }
+          }
         },
         protocol: protocol
       }
     };
 
-    if(stream.localPort) register_flow();
+    if(stream.localPort || ( stream._socket && stream._socket.address() && stream._socket.address().port) ) register_flow();
 
     return remotes[remoteid];
   }
 
-  var server = createServer(function(stream) {
-    init(stream, {protocol: protocol, address: stream.remoteAddress, port: stream.remotePort});  
-  });
+  if (isServer) {
+    var server = createServer(function(stream) {
+      init(stream, {protocol: protocol, address: stream.remoteAddress ? stream.remoteAddress : stream._socket.remoteAddress, port: stream.remotePort ? stream.remotePort : stream._socket.remotePort });  
+    });
+  }
 
   return {
     open: function(remote, error) {
       var remoteid = [remote.address, remote.port].join();
-
       if(remoteid in remotes) return remotes[remoteid](error);
-
       return init(connect(remote.port, remote.address), remote)(error);
     },
     get: function(address, error) {
-      var c = address.local ? flows[[address.address, address.port, address.local.address, address.local.port].join()]
-        : remotes[[address.address, address.port].join()];
-
+      var c = address.local ? flows[[address.address, address.port, address.local.address, address.local.port].join()] : remotes[[address.address, address.port].join()];
       return c && c(error);
     },
-    destroy: function() { server.close(); }
+    destroy: function() { 
+      if (server) {
+        server.close();
+      }
+    }
   };
 }
 
 function makeTlsTransport(options, callback) {
   return makeStreamTransport(
-    'TLS', 
+    { protocol: 'TLS', isServer: options.isServer },
     function(port, host, callback) { return tls.connect(port, host, options.tls, callback); }, 
     function(callback) {
       var server = tls.createServer(options.tls, callback);
-      server.listen(options.tls_port || 5061, options.address);
+      server.listen(options.tls.port || 5062, options.tls.address);
       return server;
     },
     callback);
@@ -605,103 +632,50 @@ function makeTlsTransport(options, callback) {
 
 function makeTcpTransport(options, callback) {
   return makeStreamTransport(
-    'TCP',
-    function(port, host, callback) { return net.connect(port, host, callback); },
+    { protocol: 'TCP', isServer: options.isServer },
+    function(port, host, callback) { console.warn('TCP callback', callback); return net.connect(port, host, callback); },
     function(callback) { 
       var server = net.createServer(callback);
-      server.listen(options.port || 5060, options.address);
+      server.listen(options.tcp.port || 5061, options.tcp.address);
       return server;
     },
     callback);
 }
 
+
+function makeWssTransport(options, callback) {
+  return makeStreamTransport(
+    { protocol: 'WSS', isServer: options.isServer },
+    function(port, host, callback) {   
+      var socket = new WebSocket('wss://'+host+':'+port, 'sip');
+      if (callback) socket.on('open', callback);
+      return socket;
+     },
+    function(callback) {
+      var server = new https.createServer(options.wss);
+      const wss = new WebSocket.Server({ server: server });
+      wss.on('connection', callback);
+      server.listen(options.wss.port || 8507, function() {
+      });
+      return wss;
+    },
+    callback);
+}
+
 function makeWsTransport(options, callback) {
-  var flows = Object.create(null);
-  var clients = Object.create(null);
-
-  
-  function init(ws) {
-    var remote = {address: ws._socket.remoteAddress, port: ws._socket.remotePort},
-        local = {address: ws._socket.address().address, port: ws._socket.address().port},
-        flowid = [remote.address, remote.port, local.address, local.port].join();
-
-    flows[flowid] = ws;
-
-    ws.on('close', function() { delete flows[flowid]; });
-    ws.on('message', function(data) {
-      var msg = parseMessage(data);
-      if(msg) {
-        callback(msg, {protocol: 'WS', address: remote.address, port: remote.port, local: local});
-      }
-    });
-  }
-
-  function makeClient(uri) {
-    if(clients[uri]) return clients[uri]();
-
-    var socket = new WebSocket(uri, 'sip', {procotol: 'sip'}),
-        queue = [],
-        refs = 0;
-    
-    function send_connecting(m) { queue.push(stringify(m)); }
-    function send_open(m) { socket.send(typeof m === 'string' ? m : stringify(m)); }
-    var send = send_connecting;
-
-    socket.on('open', function() { 
-      init(socket); 
-      send = send_open;
-      queue.splice(0).forEach(send);
-    });
-
-    function open(onError) {
-      ++refs;
-      if(onError) socket.on('error', onError);
-      return {
-        send: function(m) { send(m); },
-        release: function() {
-          if(onError) socket.removeListener('error', onError);
-          if(--refs === 0) socket.terminate();
-        },
-        protocol: 'WS'
-      };
-    };
-
-    return clients[uri] = open;
-  }
-
-  if(options.ws_port) {
-    var server = new WebSocket.Server({port:options.ws_port});
-    server.on('connection',init);
-  }
-
-  function get(flow) {
-    var ws = flows[[flow.address, flow.port, flow.local.address, flow.local.port].join()];
-    if(ws) {
-      return {
-        send: function(m) { ws.send(stringify(m)); },
-        release: function() {},
-        protocol: 'WS'
-      };
-    } else {
-        console.log("Failed to get ws for target. Target/flow was:");
-        console.log(util.inspect(flow));
-        console.log("Flows[] were:");
-        console.log(util.inspect(flows));
-    }
-  }
-
-  function open(target, onError) {
-    if(target.local)
-      return get(target); 
-    else
-      return makeClient('ws://'+target.host+':'+target.port)(onError);
-  }
-
-  return {
-    get: open,
-    open: open,
-    destroy: function() { server.close(); }
-  }
+  return makeStreamTransport(
+    { protocol: 'WS', isServer: options.isServer },
+    function(port, host, callback) {  
+      var socket = new WebSocket('ws://'+host+':'+port, 'sip');
+      if (callback) socket.on('open', callback);
+      return socket;
+     },
+    function(callback) { 
+      var server = new WebSocket.Server({ port: options.ws.port });
+      server.on('connection', callback);
+      return server;
+    },
+    callback);
 }
 
 function makeUdpTransport(options, callback) {
@@ -754,14 +728,21 @@ function makeTransport(options, callback) {
     }
   }
   
-  if(options.udp === undefined || options.udp)
+  if(options.udp) {
     protocols.UDP = makeUdpTransport(options, callbackAndLog); 
-  if(options.tcp === undefined || options.tcp)
+  }
+  if(options.tcp) {
     protocols.TCP = makeTcpTransport(options, callbackAndLog);
-  if(options.tls)
+  }
+  if(options.tls) {
     protocols.TLS = makeTlsTransport(options, callbackAndLog);
-  if(options.ws_port && WebSocket)
+  }
+  if(options.ws) {
     protocols.WS = makeWsTransport(options, callbackAndLog);
+  }
+  if(options.wss) {
+    protocols.WSS = makeWssTransport(options, callbackAndLog);
+  }
 
   function wrap(obj, target) {
     return Object.create(obj, {send: {value: function(m) {
@@ -831,14 +812,15 @@ var resolve4 = makeWellBehavingResolver(dns.resolve4);
 var resolve6 = makeWellBehavingResolver(dns.resolve6);
 
 function resolve(uri, action) {
-  if(uri.params.transport === 'ws')
-    return action([{protocol: uri.schema === 'sips' ? 'WSS' : 'WS', host: uri.host, port: uri.port || (uri.schema === 'sips' ? 433 : 80)}]);
+
+  // if(uri.params.transport === 'ws')
+  //   return action([{protocol: uri.schema === 'sips' ? 'WSS' : 'WS', host: uri.host, port: uri.port || (uri.schema === 'sips' ? 433 : 80)}]);
 
   if(net.isIP(uri.host)) {
     var protocol = uri.params.transport || 'UDP';
     return action([{protocol: protocol, address: uri.host, port: uri.port || defaultPort(protocol)}]);
   }
-  
+
   function resolve46(host, cb) {
     resolve4(host, function(e4, a4) {
       resolve6(host, function(e6, a6) {
@@ -850,18 +832,15 @@ function resolve(uri, action) {
     });
   }
 
-  if(uri.port) {
+  if (uri.port) {
     var protocols = uri.params.transport ? [uri.params.transport] : ['UDP', 'TCP', 'TLS'];
-    
     resolve46(uri.host, function(err, address) {
       address = (address || []).map(function(x) { return protocols.map(function(p) { return { protocol: p, address: x, port: uri.port || defaultPort(p)};});})
         .reduce(function(arr,v) { return arr.concat(v); }, []);
         action(address);
     });
-  }
-  else {
+  } else {
     var protocols = uri.params.transport ? [uri.params.transport] : ['tcp', 'udp', 'tls'];
-  
     var n = protocols.length;
     var addresses = [];
 
@@ -912,13 +891,15 @@ function makeSM() {
 
   return {
     enter: function(newstate) {
-      if(state && state.leave)
+      if(state && state.leave) {
         state.leave();
+      }
       
       state = newstate;
       Array.prototype.shift.apply(arguments);
-      if(state.enter) 
+      if(state.enter) {
         state.enter.apply(this, arguments);
+      }
     },
     signal: function(s) {
       if(state && state[s]) 
@@ -1177,7 +1158,7 @@ function makeTransactionLayer(options, transport) {
   return {
     createServerTransaction: function(rq, cn) {
       var id = makeTransactionId(rq);
-      
+
       return server_transactions[id] = (rq.method === 'INVITE' ? createInviteServerTransaction : createServerTransaction)(
         cn.send.bind(cn),
         function() { 
@@ -1188,11 +1169,11 @@ function makeTransactionLayer(options, transport) {
     createClientTransaction: function(connection, rq, callback) {
       if(rq.method !== 'CANCEL') rq.headers.via[0].params.branch = generateBranch();
       
-      
       if(typeof rq.headers.cseq !== 'object')
         rq.headers.cseq = parseCSeq({s: rq.headers.cseq, i:0});
 
       var send = connection.send.bind(connection);
+
       send.reliable = connection.protocol.toUpperCase() !== 'UDP';
       
       var id = makeTransactionId(rq);
@@ -1229,21 +1210,22 @@ function sequentialSearch(transaction, connect, addresses, rq, callback) {
   function next() {
     onresponse = searching;
     
-    if(addresses.length > 0) {
+    if (addresses.length > 0) {
       try {
         var address = addresses.shift();
         var client = transaction(connect(address, function(err) {
           if(err) {
-            console.log("err: ", err);
+            console.error(err);
           }
+
           client.message(makeResponse(rq, 503));
         }), rq, function() { onresponse.apply(null, arguments); }); 
       }
       catch(e) {
+        console.error(e);
         onresponse(address.local ? makeResponse(rq, 430) : makeResponse(rq, 503));  
       }
-    }
-    else {
+    } else {
       onresponse = callback;
       onresponse(makeResponse(rq, lastStatusCode || 404));
     }
@@ -1263,9 +1245,13 @@ function sequentialSearch(transaction, connect, addresses, rq, callback) {
 }
 
 exports.create = function(options, callback) {
-  var errorLog = (options.logger && options.logger.error) || function() {};
+  var isServer = options.isServer = ( (typeof options.udp  == 'object') || (typeof options.tcp == 'object') 
+    || (typeof options.tls  == 'object') || (typeof options.ws  == 'object')
+    || (typeof options.wss  == 'object') ? true : false );
 
+  var errorLog = (options.logger && options.logger.error) || function() {};
   var transport = makeTransport(options, function(m,remote) {
+
     try {
       var t = m.method ? transaction.getServer(m) : transaction.getClient(m);
 
@@ -1288,6 +1274,7 @@ exports.create = function(options, callback) {
       }
     } 
     catch(e) {
+      console.error(e)
       errorLog(e);
     }
   });
@@ -1310,8 +1297,8 @@ exports.create = function(options, callback) {
     var flow = {protocol: s[1], address: s[2], port: +s[3], local: {address: s[4], port: +s[5]}};
 
     return encodeFlowToken(flow) == token ? flow : undefined;
-  }       
-  
+  }
+
   return {
     send: function(m, callback) {
       if(m.method === undefined) {
@@ -1320,8 +1307,8 @@ exports.create = function(options, callback) {
       }
       else {
         var hop = parseUri(m.uri);
-  
-        if(typeof m.headers.route === 'string')
+
+        if(typeof m.headers.route === 'string' && m && m.headers && m.headers.route)
           rq.headers.route = parsers.route({s: m.headers.route, i:0});
  
           if (m.method == 'INFO') {
@@ -1340,14 +1327,14 @@ exports.create = function(options, callback) {
               }
             }
           }
-
-        (function(callback) {
-          if(hop.host === hostname) {
-            var flow = decodeFlowToken(hop.user);
-            callback(flow ? [flow] : []);
+        (function(callback2) {
+          // if(hop.host === hostname) {
+          if(isServer) {
+           var flow = decodeFlowToken(hop.user);
+           callback2(flow ? [flow] : []);
+          } else {
+            resolve(hop, callback2);
           }
-          else
-            resolve(hop, callback);
         })(function(addresses) {
           if(m.method === 'ACK') {
             if(!Array.isArray(m.headers.via))
@@ -1372,8 +1359,9 @@ exports.create = function(options, callback) {
               cn.release();
             }
           }
-          else
+          else {
             sequentialSearch(transaction.createClientTransaction.bind(transaction), transport.open.bind(transport), addresses, m, callback || function() {}); 
+          }
         });
       }
     },
@@ -1405,4 +1393,3 @@ exports.start = function(options, callback) {
   exports.isFlowUri = r.isFlowUri;
   exports.hostname = r.hostname;
 }
-
