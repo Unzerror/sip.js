@@ -633,7 +633,7 @@ function makeTlsTransport(options, callback) {
 function makeTcpTransport(options, callback) {
   return makeStreamTransport(
     { protocol: 'TCP', isServer: options.isServer },
-    function(port, host, callback) { console.warn('TCP callback', callback); return net.connect(port, host, callback); },
+    function(port, host, callback) { return net.connect(port, host, callback); },
     function(callback) { 
       var server = net.createServer(callback);
       server.listen(options.tcp.port || 5061, options.tcp.address);
