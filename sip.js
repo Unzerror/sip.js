@@ -657,7 +657,7 @@ function makeWssTransport(options, callback) {
       wss.on('connection', callback);
       server.listen(options.wss.port || 8507, function() {
       });
-      return wss;
+      return server;
     },
     callback);
 }
