@@ -530,7 +530,9 @@ function makeStreamTransport(options, connect, createServer, callback) {
     // stream.setEncoding('ascii');
     stream.on('data', makeStreamParser(function(m) {
       if(checkMessage(m)) {
-        if(m.method) m.headers.via[0].params.received = remote.address;
+        m.headers.via[0].params.received = stream.localAddress;
+        m.headers.via[0].params.rport = stream.localPort;
+
         callback(m,
           {protocol: remote.protocol, address: stream.remoteAddress, port: stream.remotePort, local: { address: stream.localAddress, port: stream.localPort}},
           stream);
@@ -538,7 +540,9 @@ function makeStreamTransport(options, connect, createServer, callback) {
     }));
     stream.on('message', makeStreamParser(function(m) {
       if(checkMessage(m)) {
-        if(m.method) m.headers.via[0].params.received = remote.address;
+        m.headers.via[0].params.received = stream._socket.address().address;
+        m.headers.via[0].params.rport = stream._socket.address().port;
+
         callback(m,
           {protocol: remote.protocol, address: stream._socket.remoteAddress, port: stream._socket.remotePort, local: { address: stream._socket.address().address, port: stream._socket.address().port}},
           stream);
