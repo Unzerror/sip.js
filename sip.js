@@ -530,9 +530,10 @@ function makeStreamTransport(options, connect, createServer, callback) {
     // stream.setEncoding('ascii');
     stream.on('data', makeStreamParser(function(m) {
       if(checkMessage(m)) {
-        m.headers.via[0].params.received = stream.localAddress;
-        m.headers.via[0].params.rport = stream.localPort;
-
+        if(m.method) {
+          m.headers.via[0].params.received = stream.localAddress;
+          m.headers.via[0].params.rport = stream.localPort;
+        }
         callback(m,
           {protocol: remote.protocol, address: stream.remoteAddress, port: stream.remotePort, local: { address: stream.localAddress, port: stream.localPort}},
           stream);
@@ -540,9 +541,10 @@ function makeStreamTransport(options, connect, createServer, callback) {
     }));
     stream.on('message', makeStreamParser(function(m) {
       if(checkMessage(m)) {
-        m.headers.via[0].params.received = stream._socket.address().address;
-        m.headers.via[0].params.rport = stream._socket.address().port;
-
+        if(m.method) {
+          m.headers.via[0].params.received = stream._socket.address().address;
+          m.headers.via[0].params.rport = stream._socket.address().port;
+        }
         callback(m,
           {protocol: remote.protocol, address: stream._socket.remoteAddress, port: stream._socket.remotePort, local: { address: stream._socket.address().address, port: stream._socket.address().port}},
           stream);
@@ -755,8 +757,11 @@ function makeTransport(options, callback) {
         m.headers.via[0].port = options.port || defaultPort(this.protocol);
         m.headers.via[0].protocol = this.protocol;
 
-        if(this.protocol === 'UDP' && (!options.hasOwnProperty('rport') || options.rport)) {
-          m.headers.via[0].params.rport = null;
+        // if(this.protocol === 'UDP' && (!options.hasOwnProperty('rport') || options.rport)) {
+        if(!options.hasOwnProperty('rport') || options.rport) {
+          if(!options.hasOwnProperty('rport') || options.rport) {
+            m.headers.via[0].params.rport = null;
+          }
         }
       }
       options.logger && options.logger.send && options.logger.send(m, target);
