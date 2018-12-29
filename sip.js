@@ -585,7 +585,7 @@ function makeStreamTransport(options, connect, createServer, callback) {
             stream.write(stringify(m), 'utf8');
           } else {
             if (stream.readyState == 1 ) {
-              stream.send(stringify(m), 'utf8');
+              stream.send(stringify(m));
             } else {
               onError('Error sending message via Websocket');
             }
