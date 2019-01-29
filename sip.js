@@ -521,9 +521,11 @@ function makeStreamTransport(options, connect, createServer, callback) {
     var remoteid = [remote.address, remote.port].join(),
       flowid = undefined,
       refs = 0;
+    // remoteid = remoteid.replace('::ffff:', '');
 
     function register_flow() {
       flowid = [remoteid,stream.localAddress ? stream.localAddress : stream._socket.remoteAddress, stream.localPort ? stream.localPort : stream._socket.address().port].join();
+      // flowid = flowid.replace('::ffff:', '');
       flows[flowid] = remotes[remoteid];
     }
 
@@ -608,7 +610,9 @@ function makeStreamTransport(options, connect, createServer, callback) {
 
   return {
     open: function(remote, error) {
-      var remoteid = [remote.address, remote.port].join();
+      var remoteid = '::ffff:' + [remote.address, remote.port].join();
+      // var remoteid = [remote.address, remote.port].join();
+      // remoteid = remoteid.replace('::ffff:', '');
       if(remoteid in remotes) return remotes[remoteid](error);
       return init(connect(remote.port, remote.address), remote)(error);
     },
@@ -824,7 +828,6 @@ function resolve(uri, action) {
 
   // if(uri.params.transport === 'ws')
   //   return action([{protocol: uri.schema === 'sips' ? 'WSS' : 'WS', host: uri.host, port: uri.port || (uri.schema === 'sips' ? 433 : 80)}]);
-
   if(net.isIP(uri.host)) {
     var protocol = uri.params.transport || 'UDP';
     return action([{protocol: protocol, address: uri.host, port: uri.port || defaultPort(protocol)}]);
@@ -1229,8 +1232,7 @@ function sequentialSearch(transaction, connect, addresses, rq, callback) {
 
           client.message(makeResponse(rq, 503));
         }), rq, function() { onresponse.apply(null, arguments); }); 
-      }
-      catch(e) {
+      } catch(e) {
         console.error(e);
         onresponse(address.local ? makeResponse(rq, 430) : makeResponse(rq, 503));  
       }
@@ -1316,9 +1318,8 @@ exports.create = function(options, callback) {
       }
       else {
         var hop = parseUri(m.uri);
-
-        if(typeof m.headers.route === 'string' && m && m.headers && m.headers.route)
-          rq.headers.route = parsers.route({s: m.headers.route, i:0});
+        // if(typeof m.headers.route === 'string' && m && m.headers && m.headers.route)
+          // rq.headers.route = parsers.route({s: m.headers.route, i:0});
  
           if (m.method == 'INFO') {
             m.headers.route = hop;
@@ -1338,12 +1339,12 @@ exports.create = function(options, callback) {
           }
         (function(callback2) {
           // if(hop.host === hostname) {
-          if(isServer) {
-           var flow = decodeFlowToken(hop.user);
-           callback2(flow ? [flow] : []);
-          } else {
+          //if(isServer) {
+          // var flow = decodeFlowToken(hop.user);
+          // callback2(flow ? [flow] : []);
+          //} else {
             resolve(hop, callback2);
-          }
+          //}
         })(function(addresses) {
           if(m.method === 'ACK') {
             if(!Array.isArray(m.headers.via))
