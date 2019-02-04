@@ -563,7 +563,7 @@ function makeStreamTransport(options, connect, createServer, callback) {
 
     stream.on('error',    function() {});
     stream.on('end',      function() { 
-      if(refs !== 0) stream.emit('error', new Error('remote peer disconnected'));
+      // if(refs !== 0) stream.emit('error', new Error('remote peer disconnected'));
       stream.end();
     });
 
